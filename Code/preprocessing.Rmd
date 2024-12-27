@@ -224,7 +224,7 @@ unique(clubs_missing_contract$club)
 > - Phần dữ liệu khuyết trong cột `loaned_from` ta sẽ thay thế bằng giá trị `Not on loan` để thể hiện các cầu thủ không ở dạng mượn.\
 > - Vì phần dữ liệu khuyết nhỏ nên ta có thể loại bỏ. 
 
-```{r include=FALSE}
+```{r echo = T, results = 'hide'}
 # Xử lý dữ liệu khuyết ở cột loaned_from 
 data <- data |>
   mutate(loaned_from = ifelse(is.na(loaned_from), "Not on loan", loaned_from)) |>
@@ -234,6 +234,7 @@ data <- data |>
 na.omit(data)
 
 ```
+
 
 ```{r}
 # Lưu dữ liệu đã được xử lý

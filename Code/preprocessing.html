@@ -589,8 +589,15 @@ bằng giá trị <code>Not on loan</code> để thể hiện các cầu thủ k
 dạng mượn.<br />
 - Vì phần dữ liệu khuyết nhỏ nên ta có thể loại bỏ.</p>
 </blockquote>
-<div class="sourceCode" id="cb15"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" tabindex="-1"></a><span class="co"># Lưu dữ liệu đã được xử lý</span></span>
-<span id="cb15-2"><a href="#cb15-2" tabindex="-1"></a><span class="fu">write_csv</span>(data, <span class="at">file =</span> <span class="st">&quot;../Datasets/cleaned_fifa_eda_stats.csv&quot;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb15"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" tabindex="-1"></a><span class="co"># Xử lý dữ liệu khuyết ở cột loaned_from </span></span>
+<span id="cb15-2"><a href="#cb15-2" tabindex="-1"></a>data <span class="ot">&lt;-</span> data <span class="sc">|&gt;</span></span>
+<span id="cb15-3"><a href="#cb15-3" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">loaned_from =</span> <span class="fu">ifelse</span>(<span class="fu">is.na</span>(loaned_from), <span class="st">&quot;Not on loan&quot;</span>, loaned_from)) <span class="sc">|&gt;</span></span>
+<span id="cb15-4"><a href="#cb15-4" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">loaned_from =</span> <span class="fu">as.factor</span>(loaned_from))</span>
+<span id="cb15-5"><a href="#cb15-5" tabindex="-1"></a></span>
+<span id="cb15-6"><a href="#cb15-6" tabindex="-1"></a><span class="co"># Xóa phần dữ liệu khuyết</span></span>
+<span id="cb15-7"><a href="#cb15-7" tabindex="-1"></a><span class="fu">na.omit</span>(data)</span></code></pre></div>
+<div class="sourceCode" id="cb16"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb16-1"><a href="#cb16-1" tabindex="-1"></a><span class="co"># Lưu dữ liệu đã được xử lý</span></span>
+<span id="cb16-2"><a href="#cb16-2" tabindex="-1"></a><span class="fu">write_csv</span>(data, <span class="at">file =</span> <span class="st">&quot;../Datasets/cleaned_fifa_eda_stats.csv&quot;</span>)</span></code></pre></div>
 </div>
 </div>
 </section>
