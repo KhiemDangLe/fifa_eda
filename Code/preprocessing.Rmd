@@ -231,7 +231,7 @@ data <- data |>
   mutate(loaned_from = as.factor(loaned_from))
 
 # Xóa phần dữ liệu khuyết
-na.omit(data)
+data <- na.omit(data)
 
 ```
 

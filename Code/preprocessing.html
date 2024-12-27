@@ -595,7 +595,7 @@ dạng mượn.<br />
 <span id="cb15-4"><a href="#cb15-4" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">loaned_from =</span> <span class="fu">as.factor</span>(loaned_from))</span>
 <span id="cb15-5"><a href="#cb15-5" tabindex="-1"></a></span>
 <span id="cb15-6"><a href="#cb15-6" tabindex="-1"></a><span class="co"># Xóa phần dữ liệu khuyết</span></span>
-<span id="cb15-7"><a href="#cb15-7" tabindex="-1"></a><span class="fu">na.omit</span>(data)</span></code></pre></div>
+<span id="cb15-7"><a href="#cb15-7" tabindex="-1"></a>data <span class="ot">&lt;-</span> <span class="fu">na.omit</span>(data)</span></code></pre></div>
 <div class="sourceCode" id="cb16"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb16-1"><a href="#cb16-1" tabindex="-1"></a><span class="co"># Lưu dữ liệu đã được xử lý</span></span>
 <span id="cb16-2"><a href="#cb16-2" tabindex="-1"></a><span class="fu">write_csv</span>(data, <span class="at">file =</span> <span class="st">&quot;../Datasets/cleaned_fifa_eda_stats.csv&quot;</span>)</span></code></pre></div>
 </div>
