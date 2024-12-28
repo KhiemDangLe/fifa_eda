@@ -195,6 +195,7 @@ data <- data |>
       mutate(position = position_groups[position]) |>
       mutate(body_type = sapply(body_type, clean_body_type)) |>
       separate(col = "work_rate", into = c("attacking_work_rate", "deffensive_work_rate"), sep = "/", remove = TRUE) |>
+      mutate(deffensive_work_rate = trimws(deffensive_work_rate)) |>
       mutate(across(.cols = c("preferred_foot", "international_reputation", "position",
                               "body_type", "attacking_work_rate", "deffensive_work_rate", 
                               "skill_moves", "weak_foot"), ~as.factor(.)))
