@@ -1,0 +1,659 @@
+---
+title: Xây dựng mô hình hồi quy cho cột value, wage
+author: Nhóm
+output:
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: vignette
+---
+
+# Import Library
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(janitor)
+library(stats)
+library(boot)
+library(caret)
+library(leaps)
+library(glmnet)
+library(Metrics)
+library(car)
+library(visreg)
+library(mgcv)
+```
+
+# Đọc dữ liệu đã làm sạch và làm sạch dữ liệu
+
+```{r message=FALSE, warning=FALSE}
+data <- read_csv("../Datasets/cleaned_fifa_eda_stats.csv")
+data <- data |>
+  clean_names()
+```
+
+```{r}
+cat("Number of unique clubs: ", length(unique(data$club)))
+cat("\nNumber of unique nationalities: ", length(unique(data$nationality)))
+```
+
+> **Nhận xét:**
+>
+> -   Bộ dữ liệu này chứa một số biến giải thích thuộc loại biến định tính với nhiều nhóm khác nhau. Ví dụ, cột club có đến 651 câu lạc bộ khác nhau. Để xử lý tình huống này, chúng ta có thể gộp các nhóm nhỏ thành những nhóm tổng quát hơn nhằm giảm số lượng nhóm, hoặc áp dụng mô hình hồi quy phân cấp (multilevel regression) để tận dụng cấu trúc phân tầng của dữ liệu. Đơn giản hơn, chúng ta có thể bỏ qua các cột này
+
+```{r}
+simplified_data <- data |> 
+  select(-c(id, name, loaned_from)) |>
+  select(-c(nationality, club)) |>
+  mutate(wage = wage * 1000)
+```
+
+# **Mô hình hồi quy tuyến tính cho cột value**
+
+```{r message=FALSE}
+value_lm <- lm(value ~ ., data = simplified_data)
+
+summary(value_lm)
+```
+
+> **Nhận xét**
+>
+> -   Dựa trên kết quả từ hàm summary, ta nhận thấy được độ chính xác của mô hình rất cao R-squared: 0.9901, Adjusted R-squared: 0.9901.
+> -   Với mức ý nghĩa alpha = 0.0001 và kết quả từ cột Pr(\>\|t\|), các biến giải thích có ảnh hưởng đáng kể đến mô hình bao gồm: age, overall, potential, wage, international_reputation, positionalGoalKeeper, crossing, finishing, volleys, fk_accuracy, stamina, gk_kicking, release_clause. Tuy nhiên, cần lưu ý rằng các giá trị p-value này dựa trên các giả định của mô hình hồi quy tuyến tính.
+> -   Để đảm bảo tính chính xác và độ tin cậy của các hệ số ước lượng, nên áp dụng phương pháp bootstrap để kiểm định các hệ số thay vì chỉ dựa vào giả định ban đầu của mô hình.
+
+## Sự suy luận cho mô hình
+
+-   Vì dữ liệu có kích thước rất lớn, thời gian thực hiện Boostrap sẽ rất lâu, nên ta thiết lập tham số `parallel = multicore` để thực hiện song song.
+
+```{r}
+# Thực hiện phương pháp boostrap
+fun_boot_md <- function(data, ind, formula, ...){
+  data_new <- data[ind,]
+  out_md <- lm(formula = formula, data = data_new, ...)
+  return(setNames(out_md$coefficients, names(out_md$coefficients)))
+}
+
+set.seed(84)
+boot_value_lm <- boot(data = simplified_data, statistic = fun_boot_md, R = 1000, formula = value ~ ., parallel = "multicore")
+```
+
+### Kiểm định hệ số bằng phương pháp Bootstrap
+
+```{r}
+pvals_boot_value <- sapply(1:ncol(boot_value_lm$t),function(x) {
+  qt0 <- mean(boot_value_lm$t[, x] <= 0)
+  if (qt0 < 0.5) {
+    return(2*qt0)
+  } else {
+    return(2*(1- qt0))
+  }
+})
+names(pvals_boot_value) <-  names(boot_value_lm$t0)
+pvals_boot_value[pvals_boot_value < 0.0001]
+```
+
+> **Nhận xét**
+>
+> -   Với mức ý nghĩa alpha = 0.0001 các biến giải thích có ý nghĩa thống kê đối với mô hình bao gồm: age, overall, potential, international_reputation, positionGoalkeeper, crossing, finishing, short_passing, volleys, stamina, release_clause. Điều này cho thấy các biến này đều có ý nghĩa thống kê rất cao
+> -   Việc có nhiều biến có ý nghĩa thống kê cao thường cho thấy mô hình hồi quy được xây dựng là phù hợp và có khả năng giải thích tốt dữ liệu. Mặc dù các biến này đều có ý nghĩa thống kê, cần cân nhắc về ý nghĩa thực tiễn của chúng. Một số biến có thể không có ý nghĩa thực tế mạnh dù có ý nghĩa thống kê cao.
+
+### Đánh giá mô hình
+
+```{r}
+set.seed(21)
+ctrl <- trainControl(method = "cv", number = 10)
+cv_value_model <- train(value ~ ., data = simplified_data, method = "lm", trControl = ctrl)
+print(cv_value_model)
+```
+
+> **Nhận xét**:
+>
+> -   Dựa vào kết quả từ đoạn code trên, với các giá trị RRMSE = 0.575626, R-squared = 0.573021, và MAE = 0.2563513, so sánh với kết quả của hàm summary.lm trong mục Mô hình hồi quy tuyến tính cho cột value, ta nhận thấy mô hình có khả năng giải thích rất cao khi sử dụng tất cả các biến độc lập. Điều này được thể hiện qua giá trị R-squared gần bằng 1, cho thấy mô hình phù hợp với dữ liệu và có độ chính xác cao trong việc dự đoán.
+> -   Tuy nhiên, mô hình hiện tại sử dụng rất nhiều biến giải thích, do đó, ta tìm cách đơn giản hóa mô hình
+
+## Lựa chọn mô hình
+
+### **Hồi quy từng bước và cross-validation**
+
+```{r}
+predict.regsubsets <- function(object, newdata, id_model){
+  form <- as.formula(object$call[[2]])
+  x_mat <- model.matrix(form, newdata)
+  coef_est <- coef(object, id = id_model)
+  x_vars <- names(coef_est)
+  res <- x_mat[, x_vars] %*% coef_est
+  return(as.numeric(res))
+}
+
+# Chia bộ dữ liệu thành các folds
+nrows <- nrow(simplified_data)
+k <- 10
+
+set.seed(21)
+folds <-  sample(rep(1:k,length=nrows))
+
+cv_error_rj <-  matrix(0,nrow=k,ncol=ncol(simplified_data))
+
+for(r in 1:k){
+  data_train_r  <-  simplified_data[folds != r,]
+  data_test_r <-  simplified_data[folds == r,]
+  steps_wise <- regsubsets(x=value ~ . ,data=data_train_r,  method="forward", really.big = TRUE, nvmax = ncol(simplified_data))
+  
+  for(j in 1:ncol(simplified_data)){
+    pred_rj <-  predict(steps_wise, newdata = data_test_r,id_model = j)
+    cv_error_rj[r,j]<-sqrt(mean((data_test_r$value - pred_rj)^2))
+  }
+}
+
+cv_error <- colMeans(cv_error_rj)
+
+
+ggplot(data= data.frame(x= c(1:ncol(simplified_data)),y=cv_error), mapping=aes(x=x,y=y)) +
+  geom_point() +
+  geom_line()+
+  labs(x="Number of predictors",y="RMSE") +
+  theme_bw()
+```
+
+> **Nhận xét**:
+>
+> -   Ta lựa chọn số biến cho mô hình tối ưu có số biến là 12
+
+```{r}
+steps_wise <- regsubsets(x = value~ ., data=simplified_data, method="forward", really.big = TRUE, nvmax = ncol(simplified_data))
+
+selected_steps_wise <- coef(steps_wise, id =  12)
+selected_steps_wise
+
+```
+
+```{r}
+# Tạo công thức cho mô hình hồi quy
+steps_wise_formula <- as.formula(paste("value ~", paste(names(coef(steps_wise, id = 12))[-1], collapse = " + ")))
+steps_wise_formula <- update(steps_wise_formula, . ~ . - positionForward - positionMidfielder)
+steps_wise_formula <- update(steps_wise_formula, . ~ . + position)
+steps_wise_formula
+
+# Sử dụng k-folds cross-validation để đánh giá mô hình
+set.seed(21)
+ctrl <- trainControl(method = "cv", number = 10)
+cv_steps_wise_value_model <- train(steps_wise_formula, data = simplified_data, method = "lm", trControl = ctrl)
+print(cv_steps_wise_value_model)
+
+```
+
+> **Nhận xét**:
+>
+> -   Sau khi giảm số biến giải thích xuống còn 12 biến, mô hình vẫn có khả năng giải thích rất cao với MSE = 0.5736017 và MAE = 0.2543194. Điều này cho thấy mô hình vẫn giữ được độ chính xác cao trong việc dự đoán giá trị của biến phụ thuộc, mặc dù số lượng biến giải thích đã giảm đáng kể. Việc giảm số biến giải thích giúp đơn giản hóa mô hình, làm cho nó dễ hiểu hơn và giảm nguy cơ overfitting (quá khớp) khi áp dụng trên dữ liệu mới.
+
+### **Hồi quy lasso**
+
+Lasso (Least Absolute Shrinkage and Selection Operator) nổi tiếng với khả năng lựa chọn biến bằng cách co một số hệ số về 0. Điều này rất hữu ích khi xử lý dữ liệu có nhiều biến dự đoán. Tuy nhiên, Lasso vẫn giả định mối quan hệ tuyến tính giữa các biến dự đoán còn lại và biến kết quả.
+
+```{r}
+x_data <- model.matrix(value ~ ., data = simplified_data)[,-1]
+y_data <- simplified_data$value
+
+
+# Tìm hệ só lambda tối ưu bằng phương pháp cross-validation
+set.seed(24)
+out_cv_lasso_value <- cv.glmnet(x = x_data, y = y_data, alpha = 1, type.measure = "mse", nfolds = 10, family = "gaussian")
+lambda_lasso_value <- out_cv_lasso_value$lambda.min
+cat("Hệ số lambda tối ưu là: ", lambda_lasso_value)
+ 
+```
+
+```{r}
+# Từ giá trị lambda tối ưu tìm được, fit mô hình trên toàn bộ tập data
+out_lasso_md <- glmnet(x = x_data, y = y_data, alpha = 1, lambda = lambda_lasso_value, family = "gaussian")
+
+# Các hệ số trong mô hình
+coeff_lasso_md <- predict(out_lasso_md, type = "coefficients")
+nonzero_coeff_lasso_md <- setNames(coeff_lasso_md@x, rownames(coeff_lasso_md)[coeff_lasso_md@i + 1])
+nonzero_coeff_lasso_md
+```
+
+> **Nhận xét**
+>
+> -   Các biến dự đoán có ý nghĩa: Các hệ số của các biến dự đoán sau không bằng không, cho thấy chúng có ý nghĩa trong việc dự đoán biến phản hồi: `overall`: 0.0131, `wage`: 5.6743, `international_reputation`: 0.3363, `volleys`: 0.0007, `reactions`: 0.0002, `stamina`: 0.0005, `release_clause`: 0.4862
+> -   Diễn giải:
+>     -   `wage` có hệ số dương lớn nhất, cho thấy nó có tác động mạnh mẽ đến biến phản hồi.
+>     -   `release_clause` cũng có hệ số dương đáng kể, cho thấy nó là một biến dự đoán quan trọng.
+>     -   Các hệ số không bằng không của `overall`, `international_reputation`, `volleys`, `reactions`, và `stamina` chỉ ra rằng các biến này cũng đóng góp vào mô hình, mặc dù ít hơn.
+
+**Đánh giá mô hình**
+
+```{r}
+set.seed(21)
+k <- 10
+folds <- sample(rep(1:k, length.out = nrow(simplified_data)))
+
+cv_rmse <- numeric(k)
+cv_rsquare <- numeric(k)
+cv_rsquare_adjusted <- numeric(k)
+
+for (i in 1:k) {
+  train_indices <- which(folds != i)
+  test_indices <- which(folds == i)
+  
+  train_data <- simplified_data[train_indices, ]
+  test_data <- simplified_data[test_indices, ]
+  
+  x_train <- model.matrix(value ~ ., data = train_data)[, -1]
+  y_train <- train_data$value
+  x_test <- model.matrix(value ~ ., data = test_data)[, -1]
+  y_test <- test_data$value
+  
+  out_lasso <- glmnet(x = x_train, y = y_train, alpha = 1, lambda = lambda_lasso_value, family = "gaussian")
+  pred <- predict(out_lasso, s = lambda_lasso_value, newx = x_test)
+  
+  cv_rmse[i] <- rmse(y_test, pred)
+  cv_rsquare[i] <- cor(y_test, pred)^2
+  cv_rsquare_adjusted[i] <- 1 - (1 - cv_rsquare[i]) * (length(y_test) - 1) / (length(y_test) - length(out_lasso$df))
+}
+
+avg_rmse <- mean(cv_rmse)
+avg_rsquare <- mean(cv_rsquare)
+avg_rsquare_adjusted <- mean(cv_rsquare_adjusted)
+
+cat("Average RMSE: ", avg_rmse)
+cat("\nAverage R-squared: ", avg_rsquare)
+cat("\nAverage R-squared adjusted: ", avg_rsquare_adjusted)
+```
+
+## **Chuẩn đoán mô hình**
+
+### **Kiểm tra tính tuyến tính và Tính đồng nhất phương sai**
+
+```{r}
+pred_lasso_md <- predict(out_lasso_md, newx = x_data)
+residual_lasso_md <- pred_lasso_md - simplified_data$value
+
+ggplot(data = simplified_data, mapping = aes(x = pred_lasso_md, y = residual_lasso_md)) +
+ geom_point() +
+ geom_smooth(method = "loess", se = FALSE) +
+ geom_hline(yintercept = 0, linetype = "dashed") +
+ labs(x = "Fittted values", y = "Residuals") +
+ theme_minimal()
+```
+
+> **Nhận xét**
+>
+> -   Đường trung bình phần dư (đường màu xanh) khá tương đồng với đường thẳng. Điều này có thể là dấu hiệu của mối quan hệ tuyến tính giữa value và một hoặc nhiều biến hồi quy.
+> -   Các cầu thủ có giá trị thấp chiếm số lượng lớn, gây ra sự tập trung dày đặc trong đồ thị phần dư ở khu vực fitted values nhỏ. Ngược lại, số lượng cầu thủ có giá trị cao ít hơn, dẫn đến phần dư phân tán nhiều hơn ở các giá trị fitted values lớn. Điều này cho thấy phương sai của phần dư không đồng đều, vi phạm giả định về homoscedasticity (phương sai phần dư đồng đều) trong hồi quy tuyến tính.
+
+### **Kiểm tra tính tuyến tính từng phần**
+
+```{r warning=FALSE}
+fitted_lasso_md <- predict(out_lasso_md, newx = x_data)
+resid_lasso_md <- y_data - fitted_lasso_md
+selected_var_lasso_md <- names(nonzero_coeff_lasso_md[-1, drop = FALSE])
+
+
+for(col_name in selected_var_lasso_md){
+    terms <- x_data[, col_name] * nonzero_coeff_lasso_md[col_name]
+    p <- ggplot(x_data, mapping = aes(x_data[, col_name], resid_lasso_md + terms)) +
+    geom_point() +
+    labs(x = col_name, y = "Partial Residuals") +
+    geom_smooth(method = "loess", se = FALSE, linetype = "dashed", color = "forestgreen") +
+    geom_line(aes(x = x_data[, col_name], y = terms), color = "blue")
+    theme_bw()
+    print(p)
+}
+```
+
+> **Nhận xét**
+>
+> **overall**:\
+> - Mối quan hệ phi tuyến tính: Đường smooth có xu hướng tăng lên khi giá trị "overall" tăng lên. Điều này cho thấy mối quan hệ giữa biến "overall" và biến kết quả có thể không tuyến tính - Heteroscedasticity (phương sai không đồng nhất): Sự phân tán của các điểm quanh đường smooth không đồng đều. Khi giá trị "overall" tăng lên (khoảng 75 trở lên), các điểm trở nên phân tán rộng hơn, đặc biệt là ở các giá trị trên 80.
+>
+> **international_reputation**:\
+> - Mối quan hệ tuyến tính yếu: "international_reputation" trong mô hình Lasso. Đường màu xanh dương có độ dốc rất nhỏ, gần như bằng phẳng, cho thấy mối quan hệ tuyến tính giữa biến này và biến kết quả là rất yếu.\
+> - Heteroscedasticity: Sự phân tán của các điểm có vẻ không đồng đều giữa các mức độ. Có vẻ như ở mức độ 3, các điểm phân tán rộng hơn so với các mức độ khác.\
+> 
+> **Voleys**:\
+> - Mối quan hệ phi tuyến tính nhẹ: Đường smooth cho thấy một mối quan hệ phi tuyến tính nhẹ giữa "volleys" và biến kết quả. Ở các giá trị "volleys" thấp và trung bình, đường smooth khá bằng\ phẳng, nhưng có xu hướng hơi tăng ở các giá trị "volleys" cao.
+> - Phân bố dữ liệu tập trung: Phần lớn dữ liệu tập trung ở các giá trị "volleys" từ khoảng 0 đến 80.
+> **release_clause**:\
+> - Mối quan hệ tuyến tính mạnh mẽ: Đường smooth gần như trùng khớp với đường thẳng màu xanh dương, cho thấy một mối quan hệ tuyến tính rất mạnh mẽ giữa "release_clause" và biến kết quả.
+> - Sự phân tán tương đối đồng đều: Các điểm dữ liệu phân tán khá đều quanh đường thẳng, không có dấu hiệu rõ ràng của heteroscedasticity (phương sai không đồng nhất).
+
+
+# **Mở rộng mô hình**
+
+## **Hồi quy đa thức** 
+
+- Dựa vào các biểu đồ kiểm tra tính tuyến tính từng phần, ta thấy rằng các biến `overall`, `wage`, `volleys` và `release_clause` có mối quan hệ phi tuyến tính với biến phụ thuộc. Do đó, ta sẽ xây dựng mô hình hồi quy đa thức cho các biến này.
+
+```{r}
+poly_value_md <- lm(value ~  release_clause + poly(overall, 3) + poly(wage, 3) + international_reputation + poly(volleys,2) + stamina , data = simplified_data)
+
+summary(poly_value_md)
+```
+
+**Đánh giá mô hình bằng phương pháp cross-validation**
+
+```{r}
+set.seed(21)
+k <- 10
+folds <- sample(rep(1:k, length.out = nrow(simplified_data)))
+
+cv_rmse <- numeric(k)
+cv_rsquare <- numeric(k)
+cv_rsquare_adjusted <- numeric(k)
+
+for (i in 1:k) {
+  train_indices <- which(folds != i)
+  test_indices <- which(folds == i)
+  
+  train_data <- simplified_data[train_indices, ]
+  test_data <- simplified_data[test_indices, ]
+  y_test <- test_data$value
+  
+  poly_value_md <- lm(value ~  release_clause + poly(overall, 3) + poly(wage, 3) + international_reputation + poly(volleys,2) + stamina , data = train_data)
+  pred <- predict(poly_value_md, newdata = test_data)
+  
+
+  cv_rmse[i] <- rmse(y_test, pred)
+  cv_rsquare[i] <- cor(y_test, pred)^2
+  cv_rsquare_adjusted[i] <- 1 - (1 - cv_rsquare[i]) * (length(y_test) - 1) / (length(y_test) - length(out_lasso$df))
+}
+
+
+avg_rmse <- mean(cv_rmse)
+avg_rsquare <- mean(cv_rsquare)
+avg_rsquare_adjusted <- mean(cv_rsquare_adjusted)
+
+cat("Average RMSE: ", avg_rmse)
+cat("\nAverage R-squared: ", avg_rsquare)
+cat("\nAverage R-squared adjusted: ", avg_rsquare_adjusted)
+```
+
+
+### Mô hình hồi quy 
+
+```{r}
+gam_value_md <- gam(value ~  release_clause + s(overall) + s(wage) + international_reputation + s(volleys) + stamina, data = simplified_data)
+summary(gam_value_md)
+
+predictions <- predict(gam_value_md, newdata = simplified_data)
+mse <- mean((simplified_data$value - predictions)^2)
+rmse <- sqrt(mse)
+print(rmse)
+```
+
+**Đánh giá mô hình bằng phương pháp cross-validation**
+
+```{r}
+set.seed(21)
+k <- 10
+folds <- sample(rep(1:k, length.out = nrow(simplified_data)))
+
+cv_rmse <- numeric(k)
+cv_rsquare <- numeric(k)
+cv_rsquare_adjusted <- numeric(k)
+
+for (i in 1:k) {
+  train_indices <- which(folds != i)
+  test_indices <- which(folds == i)
+  
+  train_data <- simplified_data[train_indices, ]
+  test_data <- simplified_data[test_indices, ]
+  y_test <- test_data$value
+  
+  gam_value_md <- gam(value ~  release_clause + s(overall) + s(wage) + international_reputation + s(volleys) + stamina, data = train_data)
+  pred <- predict(gam_value_md, newdata = test_data)
+  
+
+  cv_rmse[i] <- rmse(y_test, pred)
+  cv_rsquare[i] <- cor(y_test, pred)^2
+  cv_rsquare_adjusted[i] <- 1 - (1 - cv_rsquare[i]) * (length(y_test) - 1) / (length(y_test) - length(out_lasso$df))
+}
+
+
+avg_rmse <- mean(cv_rmse)
+avg_rsquare <- mean(cv_rsquare)
+avg_rsquare_adjusted <- mean(cv_rsquare_adjusted)
+
+cat("Average RMSE: ", avg_rmse)
+cat("\nAverage R-squared: ", avg_rsquare)
+cat("\nAverage R-squared adjusted: ", avg_rsquare_adjusted)
+```
+
+## Kết luận
+-   Sau khi xây dựng mô hình hồi quy tuyến tính, hồi quy lasso, hồi quy đa thức và hồi quy GAM, ta nhận thấy rằng mô hình hồi quy đa thức và hồi quy GAM có khả năng giải thích tốt nhất với Average RMSE:  0.5216683 Average R-squared:  0.991596, Average R-squared adjusted:  0.978958.
+-   Tổng số biến đầu sử dụng cho mô hình này là 6 biến giải thích, bao gồm: `release_clause`, `overall`, `wage`, `international_reputation`, `volleys` và `stamina`.
+
+# **Mô hình hồi quy tuyến tính cho cột wage**
+
+```{r message=FALSE}
+value_lm <- lm(wage ~ ., data = simplified_data)
+
+summary(value_lm)
+```
+
+## **Lựa chọn mô hình**
+### **Hồi quy từng bước và cross-validation**
+
+```{r}
+predict.regsubsets <- function(object, newdata, id_model){
+  form <- as.formula(object$call[[2]])
+  x_mat <- model.matrix(form, newdata)
+  coef_est <- coef(object, id = id_model)
+  x_vars <- names(coef_est)
+  res <- x_mat[, x_vars] %*% coef_est
+  return(as.numeric(res))
+}
+
+# Chia bộ dữ liệu thành các folds
+nrows <- nrow(simplified_data)
+k <- 10
+
+set.seed(23)
+folds <-  sample(rep(1:k,length=nrows))
+
+cv_error_rj <-  matrix(0,nrow=k,ncol=ncol(simplified_data))
+
+for(r in 1:k){
+  data_train_r  <-  simplified_data[folds != r,]
+  data_test_r <-  simplified_data[folds == r,]
+  steps_wise <- regsubsets(x=wage ~ . ,data=data_train_r,  method="seqrep", really.big = TRUE, nvmax = ncol(simplified_data))
+  
+  for(j in 1:ncol(simplified_data)){
+    pred_rj <-  predict(steps_wise, newdata = data_test_r,id_model = j)
+    cv_error_rj[r,j]<-sqrt(mean((data_test_r$value - pred_rj)^2))
+  }
+}
+
+cv_error <- colMeans(cv_error_rj)
+cv_error
+
+ggplot(data= data.frame(x= c(1:ncol(simplified_data)),y=cv_error), mapping=aes(x=x,y=y)) +
+  geom_point() +
+  geom_line()+
+  labs(x="Number of predictors",y="RMSE") +
+  theme_bw()
+```
+
+```{r}
+
+out_subset_wage <- regsubsets(x = wage ~ ., data = simplified_data, method = "seqrep", nvmax = ncol(simplified_data))
+coef(out_subset_wage, id = which.min(cv_error))
+```
+```{r}
+# Tạo công thức cho mô hình hồi quy
+subset_wage_formula <- as.formula(paste("wage ~", paste(names(coef(out_subset_wage, id = which.min(cv_error)))[-1], collapse = " + ")))
+#subset_wage_formula <- update(subset_wage_formula, . ~ . - positionMidfielder)
+#subset_wage_formula <- update(subset_wage_formula, . ~ . + position)
+subset_wage_formula
+
+# Sử dụng k-folds cross-validation để đánh giá mô hình
+set.seed(21)
+ctrl <- trainControl(method = "cv", number = 10)
+cv_subset_wage <- train(subset_wage_formula, data = simplified_data, method = "lm", trControl = ctrl)
+print(cv_subset_wage)
+```
+
+
+### **Hồi quy lasso**
+
+Lasso (Least Absolute Shrinkage and Selection Operator) nổi tiếng với khả năng lựa chọn biến bằng cách co một số hệ số về 0. Điều này rất hữu ích khi xử lý dữ liệu có nhiều biến dự đoán. Tuy nhiên, Lasso vẫn giả định mối quan hệ tuyến tính giữa các biến dự đoán còn lại và biến kết quả.
+
+```{r}
+x_data_wage <- model.matrix(wage ~ ., data = simplified_data)[,-1]
+y_data_wage <- simplified_data$wage
+
+
+# Tìm hệ só lambda tối ưu bằng phương pháp cross-validation
+set.seed(21)
+out_cv_lasso_wage <- cv.glmnet(x = x_data_wage, y = y_data_wage, alpha = 1, type.measure = "mse", nfolds = 10, family = "gaussian")
+lambda_lasso_wage <- out_cv_lasso_wage$lambda.min
+cat("Hệ số lambda tối ưu là: ", lambda_lasso_wage)
+ 
+```
+
+```{r}
+# Từ giá trị lambda tối ưu tìm được, fit mô hình trên toàn bộ tập data
+out_lasso_wage <- glmnet(x = x_data_wage, y = y_data_wage, alpha = 1, lambda = lambda_lasso_wage, family = "gaussian")
+
+# Các hệ số trong mô hình
+coeff_lasso_wage <- predict(out_lasso_wage, type = "coefficients")
+nonzero_coeff_lasso_wage <- setNames(coeff_lasso_wage@x, rownames(coeff_lasso_wage)[coeff_lasso_wage@i + 1])
+nonzero_coeff_lasso_wage
+```
+
+**Đánh giá mô hình**
+
+```{r}
+set.seed(21)
+k <- 10
+folds <- sample(rep(1:k, length.out = nrow(simplified_data)))
+
+cv_rmse <- numeric(k)
+cv_rsquare <- numeric(k)
+cv_rsquare_adjusted <- numeric(k)
+
+for (i in 1:k) {
+  train_indices <- which(folds != i)
+  test_indices <- which(folds == i)
+  
+  train_data <- simplified_data[train_indices, ]
+  test_data <- simplified_data[test_indices, ]
+  
+  x_train <- model.matrix(wage ~ ., data = train_data)[, -1]
+  y_train <- train_data$wage
+  x_test <- model.matrix(wage ~ ., data = test_data)[, -1]
+  y_test <- test_data$wage
+  
+  out_lasso <- glmnet(x = x_train, y = y_train, alpha = 1, lambda = lambda_lasso_wage, family = "gaussian")
+  pred <- predict(out_lasso, s = lambda_lasso_wage, newx = x_test)
+  
+  cv_rmse[i] <- rmse(y_test, pred)
+  cv_rsquare[i] <- cor(y_test, pred)^2
+  cv_rsquare_adjusted[i] <- 1 - (1 - cv_rsquare[i]) * (length(y_test) - 1) / (length(y_test) - length(out_lasso$df))
+}
+
+avg_rmse <- mean(cv_rmse)
+avg_rsquare <- mean(cv_rsquare)
+avg_rsquare_adjusted <- mean(cv_rsquare_adjusted)
+
+cat("Average RMSE: ", avg_rmse)
+cat("\nAverage R-squared: ", avg_rsquare)
+cat("\nAverage R-squared adjusted: ", avg_rsquare_adjusted)
+```
+
+## **Chuẩn đoán mô hình**
+
+### **Kiểm tra tính tuyến tính và Tính đồng nhất phương sai**
+
+```{r}
+pred_lasso_wage <- predict(out_lasso_wage, newx = x_data_wage)
+residual_lasso_wage <- pred_lasso_wage - simplified_data$wage
+
+ggplot(data = simplified_data, mapping = aes(x = pred_lasso_wage, y = residual_lasso_wage)) +
+ geom_point() +
+ geom_smooth(method = "loess", se = FALSE) +
+ geom_hline(yintercept = 0, linetype = "dashed") +
+ labs(x = "Fittted values", y = "Residuals") +
+ theme_minimal()
+```
+
+> **Nhận xét**
+>
+> -   Đường trung bình phần dư (đường màu xanh) khá tương đồng với đường thẳng. Điều này có thể là dấu hiệu của mối quan hệ tuyến tính giữa value và một hoặc nhiều biến hồi quy.
+> -   Các cầu thủ có giá trị thấp chiếm số lượng lớn, gây ra sự tập trung dày đặc trong đồ thị phần dư ở khu vực fitted values nhỏ. Ngược lại, số lượng cầu thủ có giá trị cao ít hơn, dẫn đến phần dư phân tán nhiều hơn ở các giá trị fitted values lớn. Điều này cho thấy phương sai của phần dư không đồng đều, vi phạm giả định về homoscedasticity (phương sai phần dư đồng đều) trong hồi quy tuyến tính.
+
+### **Kiểm tra tính tuyến tính từng phần**
+
+```{r warning=FALSE}
+fitted_lasso_wage <- predict(out_lasso_wage, newx = x_data)
+resid_lasso_wage <- y_data - fitted_lasso_wage
+selected_var_lasso_wage <- names(nonzero_coeff_lasso_wage[-1, drop = FALSE])
+
+for(col_name in selected_var_lasso_wage){
+    terms <- x_data[, col_name] * nonzero_coeff_lasso_wage[col_name]
+    p <- ggplot(x_data, mapping = aes(x_data[, col_name], resid_lasso_wage + terms)) +
+    geom_point() +
+    labs(x = col_name, y = "Partial Residuals") +
+    geom_smooth(method = "loess", se = FALSE, linetype = "dashed", color = "forestgreen") +
+    geom_line(aes(x = x_data[, col_name], y = terms), color = "blue")
+    theme_bw()
+    print(p)
+}
+```
+
+> **Nhận xét**
+>
+> **value**:\
+> - Mối quan hệ tuyến tính mạnh mẽ: Đường smooth gần như trùng khớp với đường thẳng màu xanh dương, cho thấy một mối quan hệ tuyến tính rất mạnh mẽ giữa "value" và biến kết quả.
+> **vakue**:\
+> - Mối quan hệ phi tuyến tính: Đường smooth có xu hướng tăng lên khi giá trị "overall" tăng lên. Điều này cho thấy mối quan hệ giữa biến "overall" và biến kết quả có thể không tuyến tính - Heteroscedasticity (phương sai không đồng nhất): Sự phân tán của các điểm quanh đường smooth không đồng đều. Khi giá trị "overall" tăng lên (khoảng 75 trở lên), các điểm trở nên phân tán rộng hơn, đặc biệt là ở các giá trị trên 80.
+>
+> **international_reputation**:\
+> - Mối quan hệ tuyến tính yếu: "international_reputation" trong mô hình Lasso. Đường màu xanh dương có độ dốc rất nhỏ, gần như bằng phẳng, cho thấy mối quan hệ tuyến tính giữa biến này và biến kết quả là rất yếu.\
+> - Heteroscedasticity: Sự phân tán của các điểm có vẻ không đồng đều giữa các mức độ. Có vẻ như ở mức độ 3, các điểm phân tán rộng hơn so với các mức độ khác.\
+> 
+> **Voleys**:\
+> - Mối quan hệ phi tuyến tính nhẹ: Đường smooth cho thấy một mối quan hệ phi tuyến tính nhẹ giữa "volleys" và biến kết quả. Ở các giá trị "volleys" thấp và trung bình, đường smooth khá bằng\ phẳng, nhưng có xu hướng hơi tăng ở các giá trị "volleys" cao.
+> - Phân bố dữ liệu tập trung: Phần lớn dữ liệu tập trung ở các giá trị "volleys" từ khoảng 0 đến 80.
+
+
+
+
+
+## Weighted model
+
+```{r}
+
+#define weights to use
+wt <- 1 / lm(abs(poly_value_md$residuals) ~ poly_value_md$fitted.values)$fitted.values^2
+
+#perform weighted least squares regression
+wls_model <- lm(value ~  release_clause + poly(overall, 3) + poly(wage, 3) + international_reputation + poly(volleys,2) + stamina, data = simplified_data, weights=wt)
+
+summary(wls_model)
+
+ggplot(wls_model,aes(x = .fitted, y = .resid))+
+  geom_point(col = 'black')+
+  geom_smooth(method = 'loess',se = F)+
+  geom_hline(yintercept = 0,linetype = 'dashed')+
+  theme_bw()+
+  labs(x = "Fitted values", y = "Residuals")
+```
+
+
+
+
+
+
+
+```{r message=FALSE}
+
+boot_value_lm
+boot.ci(boot_value_lm, index = 1, type = "perc", conf = 0.95)
+
+```
+
+```{r}
+
+```

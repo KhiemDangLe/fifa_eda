@@ -1,0 +1,241 @@
+---
+title: "Linear Regression"
+author: "Khoa"
+date: "2024-12-24"
+output: html_document
+---
+
+## Import Library
+
+```{r}
+library(tidyverse)
+library(janitor)
+
+```
+
+```{r}
+data <- read.csv("../Datasets/cleaned_fifa_eda_stats.csv")
+head(data)
+
+
+```
+
+```{r}
+data <-na.omit(data)
+```
+
+```{r}
+dim(data)
+```
+
+# Baseline model
+
+## Preprocessing data and feature selection
+
+```{r}
+data <- data|> select(-c(id,name))
+
+```
+
+```{r}
+data_numeric <- data |> select(where(is.numeric))
+                               
+```
+
+```{r}
+names(data_numeric)
+```
+
+```{r}
+all_colname <- names(data)
+category_col <- setdiff(all_colname,names(data_numeric))
+category_col
+```
+
+```{r}
+all_colname <- names(data)
+
+category_col <- setdiff(all_colname, names(data_numeric))
+
+for (i in 1:length(category_col)) {
+  data <- data |>
+    mutate(across(all_of(category_col[i]), as.factor))
+}
+```
+
+```{r}
+data$contract_valid_until <- as.numeric(substr(data$contract_valid_until, 1, 4))
+data$joined <- as.numeric(substr(data$joined, 1, 4))
+
+
+```
+
+```{r}
+data <- data |> select(-c(loaned_from,club,nationality))
+```
+
+## Linear Regression
+```{r}
+forward_data <- data |>
+  filter(position == "forward")
+```
+
+```{r}
+model <- lm(formula = overall ~ ., data = data)
+
+```
+
+```{r}
+sum_model <- summary(model)
+summary(model)
+```
+
+```{r}
+mse <- sum(residuals(model, type = c('working'))^2)/nrow(data)
+mae <- sum(abs(residuals(model, type = c('working'))))/nrow(data)
+
+cat("MSE: ",mse,'\n')
+cat("MAE: ",mae)
+```
+
+```{r}
+adjr2 <- sum_model$adj.r.squared
+
+cat("Adjusted R square: ", adjr2)
+```
+
+# 1. Lựa chọn mô hình
+
+## Step_wise
+
+Its take a whole bunch time to find small set of features by using step_wise
+
+## Ridge and Lasso
+
+```{r}
+x <- model.matrix(overall ~ ., data = data)[,-1]
+y <- data$overall
+```
+
+```{r}
+library(glmnet)
+```
+
+```{r}
+out_cv_lasso <- cv.glmnet(x = x, y = y, alpha = 1, type.measure = "mse", nfolds = 5,family = "gaussian")
+ print(out_cv_lasso)
+```
+
+```{r}
+lambda_grid <- 10^seq(from = 10, to =-2, length = 100)
+```
+
+```{r}
+beta_lambda_lasso <- out_cv_lasso$lambda.min
+out_lasso_md <- glmnet(x = x, y = y, alpha = 1,
+ lambda = lambda_grid, family = "gaussian")
+predict(out_lasso_md, s = beta_lambda_lasso, type = "coefficients")
+```
+
+```{r}
+data <- data |> select(-c(release_clause,
+                  standing_tackle,
+                  sliding_tackle,
+                  long_shots,          
+                  aggression,         
+                  interceptions,
+                  fk_accuracy,
+                  curve,
+                  dribbling,
+                  volleys,
+                  height,
+                  wage,
+                  preferred_foot,
+                  ))
+```
+
+# 2. Chuẩn đoán mô hình
+
+## 2.1 Kiểm tra tính tuyến tính của mô hình
+
+```{r}
+model <- lm(data = data, formula = overall ~. )
+#summary(model)
+```
+
+```{r}
+library(ggplot2)
+
+ggplot(model,aes(x = .fitted, y = .resid))+
+  geom_point(col = 'green')+
+  geom_smooth(method = 'loess',se = F)+
+  geom_hline(yintercept = 0,linetype = 'dashed')+
+  theme_bw()+
+  labs(x = "Fitted values", y = "Residuals")
+```
+
+Ta thấy mô hình khá ổn tuy nhiên ở 1/3 dữ liệu cuối ta thấy có 1 đường cong rõ rệt. Xem xét lại tính tuyến tính ở những phần sau.
+
+## 2.2 Kiểm tra tính tuyến tính từng phần
+
+```{r}
+names(data)
+```
+
+```{r}
+terms_md <- predict(model, type = "terms")
+partial_resid_md <- residuals(model, type = "partial")
+
+col = names(data.frame(terms_md))
+
+# Duyệt qua tất cả các cột trong data và vẽ biểu đồ cho từng cột
+for (i in 1:length(col)) {
+  
+  # Tạo dataframe cho mỗi cột
+  data_part_resid_md <- tibble(
+    data_ = data[, col[i]],
+    terms = terms_md[, col[i]],
+    partial_resid = partial_resid_md[, col[i]]
+  )
+  
+  # Vẽ biểu đồ và hiển thị biểu đồ cho từng cột
+  p <- ggplot(data_part_resid_md, mapping = aes(data_, partial_resid)) +
+    geom_point() +
+    geom_smooth(method = "loess", se = FALSE, linetype = "dashed", color = "forestgreen") +
+    geom_line(aes(x = data_, y = terms), color = "blue") +
+    labs(x = col[i], y = "Partial Residuals") +
+    theme_bw()
+  
+  # In ra biểu đồ
+  print(p)
+}
+
+```
+
+```{r}
+sum <- summary(model)
+```
+
+## 2.2 Kiểm tra đồng nhất phương sai
+
+```{r}
+ggplot(model, aes(.fitted, sqrt(abs(.stdresid)))) +
+  geom_point(na.rm = TRUE) +
+  geom_smooth(method = "loess", na.rm = TRUE, se = FALSE) +
+  labs(x = "Fitted Values", y = expression(sqrt("|Standardized residuals|"))) +
+  theme_bw()
+```
+
+## 2.4 Kiểm tra điểm ngoại lai
+
+```{r}
+ggplot(model, aes(.hat, .stdresid)) +
+ geom_point(aes(size = .cooksd)) +
+ xlab("Leverage") + ylab("Standardized Residuals") +
+ scale_size_continuous("Cook's Distance", range = c(1, 6)) +
+ theme_bw() +
+ theme(legend.position = "bottom")
+```
+
+```{r}
+```
