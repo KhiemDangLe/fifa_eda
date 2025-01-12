@@ -89,6 +89,7 @@ data <- data |>
 
        data <- data |>
       mutate(across(.cols = c("wage", "release_clause", "value"), ~clean_currency(.))) |>
+      mutate(wage = wage * 1000) |>
       mutate(weight = clean_weight(weight)) |>
       mutate(height = sapply(X = height, FUN = clean_height)) |>
       mutate(across(.cols = c("joined", "contract_valid_until"), ~clean_date(.)))
@@ -219,11 +220,11 @@ unique(clubs_missing_contract$club)
 > - Nếu dữ liệu bị khuyết theo cơ chế **MCAR**, chúng ta sẽ kỳ vọng các mẫu dữ liệu bị khuyết xuất hiện một cách ngẫu nhiên và không có một mô hình cụ thể. Trong đồ thị này, chúng ta thấy rõ ràng có các mẫu bị khuyết cụ thể (ví dụ, nhóm biến từ *'*`preferred_foot`*'* đến ***'***`gk_reflexes`***'*** cùng nhau bị khuyết). Hơn nữa, tỷ lệ của các mẫu bị khuyết này rất khác nhau, cho thấy sự khuyết dữ liệu không phải là ngẫu nhiên hoàn toàn. Do đó, dữ liệu này có **khả năng cao không phải là MCAR**.\
 > - Với cột `loaned_from`, dữ liệu bị khuyết thuộc cơ chế **MNAR** vì thiếu sót xảy ra do bản chất dữ liệu: chỉ một phần nhỏ cầu thủ thi đấu theo dạng cho mượn. Trong nhóm cầu thủ dạng cho mượn **(nhóm A)**, ta nhận thấy các cột `release_clause` và `joined` cũng bị khuyết *(\~6.942%)*, điều này nhiều khả năng liên quan đến tính chất dữ liệu.\
 > - Một nhóm cầu thủ *(\~0.01258%)* chỉ bị khuyết ở các cột: `loaned_from`, `release_clause`, `joined`, `contract_valid_until`, và `club`. Các cột khác vẫn đầy đủ dữ liệu, do đó có thể suy đoán nhóm này thuộc về **các cầu thủ vừa hết hạn hợp đồng và chưa tìm được câu lạc bộ mới.**\
-> - Ngoài ra, có nhóm cầu thủ* (\~0.2636%)\* có dữ liệu về câu lạc bộ nhưng lại bị khuyết ở các cột như `loaned_from`, `release_clause`, `joined`, và `contract_valid_until`.
+> - Ngoài ra, có nhóm cầu thủ\* (\~0.2636%)\* có dữ liệu về câu lạc bộ nhưng lại bị khuyết ở các cột như `loaned_from`, `release_clause`, `joined`, và `contract_valid_until`.
 
 > **Hướng xử lý:**\
 > - Phần dữ liệu khuyết trong cột `loaned_from` ta sẽ thay thế bằng giá trị `Not on loan` để thể hiện các cầu thủ không ở dạng mượn.\
-> - Vì phần dữ liệu khuyết nhỏ nên ta có thể loại bỏ. 
+> - Vì phần dữ liệu khuyết nhỏ nên ta có thể loại bỏ.
 
 ```{r echo = T, results = 'hide'}
 # Xử lý dữ liệu khuyết ở cột loaned_from 
@@ -235,7 +236,6 @@ data <- data |>
 data <- na.omit(data)
 
 ```
-
 
 ```{r}
 # Lưu dữ liệu đã được xử lý
