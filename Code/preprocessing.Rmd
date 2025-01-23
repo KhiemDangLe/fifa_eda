@@ -1,10 +1,7 @@
 ---
 title: Tiền xử lý dữ liệu
-author: Nhóm
 output:
-  prettydoc::html_pretty:
-    theme: cayman
-    highlight: vignette
+    output: html_document
 ---
 
 ```{r message=FALSE}
@@ -16,7 +13,7 @@ library(stringr)
 ```
 
 ```{r message=FALSE, warning=F}
-data <- read_csv("../Datasets/fifa_eda_stats.csv", na = c("", "NA"))
+data <- read_csv("fifa_eda_stats.csv", na = c("", "NA"))
 data <- data |>
   clean_names()
 ```
@@ -89,7 +86,6 @@ data <- data |>
 
        data <- data |>
       mutate(across(.cols = c("wage", "release_clause", "value"), ~clean_currency(.))) |>
-      mutate(wage = wage * 1000) |>
       mutate(weight = clean_weight(weight)) |>
       mutate(height = sapply(X = height, FUN = clean_height)) |>
       mutate(across(.cols = c("joined", "contract_valid_until"), ~clean_date(.)))
@@ -239,5 +235,5 @@ data <- na.omit(data)
 
 ```{r}
 # Lưu dữ liệu đã được xử lý
-write_csv(data, file = "../Datasets/cleaned_fifa_eda_stats.csv")
+write_csv(data, file = "cleaned_fifa_eda_stats.csv")
 ```
